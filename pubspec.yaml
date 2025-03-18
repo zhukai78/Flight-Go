@@ -64,10 +64,10 @@ flutter:
   assets:
     - assets/
     - assets/images/
-    - assets/images/background/
     - assets/images/enemies/
     - assets/images/bullets/
-    - assets/images/player.png
+    - assets/images/background/
+    - assets/images/icons/
     - assets/audio/
 
   # An image asset can refer to one or more resolution-specific "variants", see

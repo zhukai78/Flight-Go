@@ -9,6 +9,7 @@ import 'bullet_component.dart';
 import 'player_component.dart';
 import 'explosion_component.dart';
 import 'package:flame/game.dart';
+import 'power_up_component.dart';
 
 /// 敌人类型枚举
 enum EnemyType { normal, elite, boss }
@@ -17,7 +18,10 @@ enum EnemyType { normal, elite, boss }
 enum MovementPattern { straight, zigzag, circular, homing }
 
 /// 敌人组件
-class EnemyComponent extends SpriteComponent with HasGameRef<FlightGoGame>, CollisionCallbacks {
+class EnemyComponent extends PositionComponent with HasGameRef<FlightGoGame>, CollisionCallbacks {
+  // 敌人精灵图
+  Sprite? sprite;
+  
   // 敌人类型
   final EnemyType type;
   
@@ -41,11 +45,25 @@ class EnemyComponent extends SpriteComponent with HasGameRef<FlightGoGame>, Coll
   double _movementTime = 0;
   Vector2 _direction;
   
+  // 是否已被击败
+  bool _defeated = false;
+  
   // 随机数生成器
   final Random _random = Random();
   
-  // 绘制相关
+  // 自定义画笔
   late Paint _enemyPaint;
+  
+  // 闪烁效果变量
+  Color _flashColor = Colors.transparent;
+  double _flashIntensity = 0.0;
+  double _flashTime = 0.0;
+  
+  // 护盾数值
+  final int _shieldAmount = 0;
+  
+  // 透明度
+  double opacity = 1.0;
   
   EnemyComponent({
     required this.type,
@@ -63,7 +81,7 @@ class EnemyComponent extends SpriteComponent with HasGameRef<FlightGoGame>, Coll
       size: size ?? _getSizeByType(type),
     ) {
     // 初始化画笔
-    _enemyPaint = Paint()..color = _getColorByType(type);
+    _enemyPaint = Paint()..color = _getEnemyColor();
   }
   
   // 根据敌人类型获取生命值
@@ -115,36 +133,13 @@ class EnemyComponent extends SpriteComponent with HasGameRef<FlightGoGame>, Coll
   Future<void> onLoad() async {
     await super.onLoad();
     
-    // 加载敌人精灵图
-    try {
-      switch (type) {
-        case EnemyType.normal:
-          sprite = await Sprite.load('images/enemies/enemy_normal.png');
-          break;
-        case EnemyType.elite:
-          sprite = await Sprite.load('images/enemies/enemy_elite.png');
-          break;
-        case EnemyType.boss:
-          sprite = await Sprite.load('images/enemies/enemy_boss.png');
-          break;
-      }
-    } catch (e) {
-      // 图片未加载成功，我们将在render方法中绘制
-      debugPrint('无法加载敌人精灵图: $e');
-      
-      // 创建一个基于自绘形状的精灵
-      final recorder = PictureRecorder();
-      final canvas = Canvas(recorder);
-      _renderEnemyShape(canvas);
-      final picture = recorder.endRecording();
-      final image = await picture.toImage(size.x.toInt(), size.y.toInt());
-      sprite = Sprite(image);
-    }
-    
-    // 添加碰撞检测
+    // 设置碰撞检测
     add(RectangleHitbox()
       ..collisionType = CollisionType.active
     );
+    
+    // 初始化敌人画笔
+    _enemyPaint = Paint()..color = _getEnemyColor();
     
     // 如果是能射击的敌人，添加射击定时器
     if (type != EnemyType.normal || _random.nextBool()) {
@@ -156,113 +151,325 @@ class EnemyComponent extends SpriteComponent with HasGameRef<FlightGoGame>, Coll
     }
   }
   
-  @override
-  void render(Canvas canvas) {
-    if (sprite == null) {
-      // 如果精灵图未加载，绘制一个简单的敌人形状
-      _renderEnemyShape(canvas);
-    } else {
-      super.render(canvas);
+  // 获取敌人主色
+  Color _getEnemyColor() {
+    switch (type) {
+      case EnemyType.normal:
+        return Colors.red.shade700;
+      case EnemyType.elite:
+        return Colors.purple.shade700;
+      case EnemyType.boss:
+        return Colors.green.shade700;
     }
   }
   
-  // 绘制简单的敌人形状
-  void _renderEnemyShape(Canvas canvas) {
-    // 中心点
-    final center = size / 2;
+  @override
+  void render(Canvas canvas) {
+    // 保存画布状态
+    canvas.save();
     
+    // 应用透明度
+    final paint = Paint()..color = Colors.white.withOpacity(opacity);
+    
+    // 绘制敌人
+    _drawEnemy(canvas);
+    
+    // 绘制护盾效果
+    if (_shieldAmount > 0) {
+      _drawShield(canvas);
+    }
+    
+    // 应用闪烁效果
+    if (_flashIntensity > 0) {
+      final flashPaint = Paint()
+        ..color = Colors.white.withOpacity(_flashIntensity * 0.5);
+      
+      canvas.drawRect(Rect.fromLTWH(0, 0, size.x, size.y), flashPaint);
+    }
+    
+    // 恢复画布状态
+    canvas.restore();
+  }
+  
+  // 绘制敌人
+  void _drawEnemy(Canvas canvas) {
+    final enemyWidth = size.x;
+    final enemyHeight = size.y;
+    final pixelSize = enemyWidth / 16; // 像素大小
+    
+    // 获取基本画笔
+    final paint = Paint()..color = _getEnemyColor();
+    
+    // 根据敌人类型绘制不同形状
     switch (type) {
       case EnemyType.normal:
-        // 普通敌人 - 简单的三角形
-        final path = Path()
-          ..moveTo(center.x, 0) // 顶部
-          ..lineTo(size.x, size.y) // 右下角
-          ..lineTo(0, size.y) // 左下角
-          ..close();
+        // 普通敌人 - 红色小型战机
         
-        canvas.drawPath(path, _enemyPaint);
+        // 主体 - 深红色
+        paint.color = Colors.red.shade900;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            enemyWidth / 2 - pixelSize * 2,
+            0,
+            pixelSize * 4,
+            enemyHeight * 0.8
+          ),
+          paint
+        );
+        
+        // 机翼 - 红色
+        paint.color = Colors.red;
+        
+        // 左机翼
+        canvas.drawRect(
+          Rect.fromLTWH(
+            0,
+            enemyHeight * 0.3,
+            pixelSize * 4,
+            pixelSize * 2
+          ),
+          paint
+        );
+        
+        // 右机翼
+        canvas.drawRect(
+          Rect.fromLTWH(
+            enemyWidth - pixelSize * 4,
+            enemyHeight * 0.3,
+            pixelSize * 4,
+            pixelSize * 2
+          ),
+          paint
+        );
+        
+        // 引擎火焰 - 橙色
+        paint.color = Colors.orange;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            enemyWidth / 2 - pixelSize,
+            enemyHeight * 0.8,
+            pixelSize * 2,
+            pixelSize * 2
+          ),
+          paint
+        );
+        
         break;
         
       case EnemyType.elite:
-        // 精英敌人 - 六边形
-        final radius = size.x / 2;
-        final path = Path();
+        // 精英敌人 - 紫色中型战机
         
-        for (int i = 0; i < 6; i++) {
-          final angle = i * pi / 3;
-          final x = center.x + radius * cos(angle);
-          final y = center.y + radius * sin(angle);
-          
-          if (i == 0) {
-            path.moveTo(x, y);
-          } else {
-            path.lineTo(x, y);
-          }
-        }
-        
-        path.close();
-        canvas.drawPath(path, _enemyPaint);
-        
-        // 添加细节
-        final detailPaint = Paint()
-          ..color = Colors.orange
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2;
-        
-        canvas.drawCircle(
-          Offset(center.x, center.y),
-          radius * 0.6,
-          detailPaint,
+        // 主体 - 深紫色
+        paint.color = Colors.purple.shade900;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            enemyWidth / 2 - pixelSize * 2,
+            0,
+            pixelSize * 4,
+            enemyHeight * 0.7
+          ),
+          paint
         );
+        
+        // 机翼 - 紫色
+        paint.color = Colors.purple;
+        
+        // 左机翼
+        canvas.drawRect(
+          Rect.fromLTWH(
+            0,
+            enemyHeight * 0.2,
+            pixelSize * 5,
+            pixelSize * 3
+          ),
+          paint
+        );
+        
+        // 右机翼
+        canvas.drawRect(
+          Rect.fromLTWH(
+            enemyWidth - pixelSize * 5,
+            enemyHeight * 0.2,
+            pixelSize * 5,
+            pixelSize * 3
+          ),
+          paint
+        );
+        
+        // 武器
+        paint.color = Colors.purpleAccent;
+        
+        // 左武器
+        canvas.drawRect(
+          Rect.fromLTWH(
+            pixelSize * 2,
+            enemyHeight * 0.5,
+            pixelSize * 2,
+            pixelSize * 4
+          ),
+          paint
+        );
+        
+        // 右武器
+        canvas.drawRect(
+          Rect.fromLTWH(
+            enemyWidth - pixelSize * 4,
+            enemyHeight * 0.5,
+            pixelSize * 2,
+            pixelSize * 4
+          ),
+          paint
+        );
+        
+        // 引擎火焰 - 亮紫色
+        paint.color = Colors.purpleAccent;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            enemyWidth / 2 - pixelSize * 2,
+            enemyHeight * 0.7,
+            pixelSize * 4,
+            pixelSize * 3
+          ),
+          paint
+        );
+        
         break;
         
       case EnemyType.boss:
-        // Boss敌人 - 大圆形和复杂形状
-        // 主体
-        canvas.drawCircle(
-          Offset(center.x, center.y),
-          size.x * 0.4,
-          _enemyPaint,
+        // Boss敌人 - 绿色大型战机
+        
+        // 主体 - 深绿色
+        paint.color = Colors.green.shade900;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            enemyWidth / 2 - pixelSize * 4,
+            pixelSize * 2,
+            pixelSize * 8,
+            enemyHeight * 0.8
+          ),
+          paint
         );
         
-        // 外壳
-        final outerPaint = Paint()
-          ..color = Colors.purpleAccent
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 5;
+        // 机翼 - 绿色
+        paint.color = Colors.green;
         
-        canvas.drawCircle(
-          Offset(center.x, center.y),
-          size.x * 0.45,
-          outerPaint,
+        // 左机翼
+        canvas.drawRect(
+          Rect.fromLTWH(
+            0,
+            enemyHeight * 0.3,
+            pixelSize * 6,
+            pixelSize * 5
+          ),
+          paint
         );
         
-        // 武器突起
-        for (int i = 0; i < 4; i++) {
-          final angle = i * pi / 2;
-          final x1 = center.x + size.x * 0.5 * cos(angle);
-          final y1 = center.y + size.x * 0.5 * sin(angle);
-          final x2 = center.x + size.x * 0.3 * cos(angle);
-          final y2 = center.y + size.x * 0.3 * sin(angle);
-          
-          final weaponPaint = Paint()..color = Colors.purple;
-          
-          canvas.drawLine(
-            Offset(x2, y2),
-            Offset(x1, y1),
-            weaponPaint..strokeWidth = 8,
-          );
-        }
+        // 右机翼
+        canvas.drawRect(
+          Rect.fromLTWH(
+            enemyWidth - pixelSize * 6,
+            enemyHeight * 0.3,
+            pixelSize * 6,
+            pixelSize * 5
+          ),
+          paint
+        );
+        
+        // 武器 - 黄绿色
+        paint.color = Colors.lightGreen;
+        
+        // 左武器1
+        canvas.drawRect(
+          Rect.fromLTWH(
+            pixelSize * 2,
+            pixelSize * 2,
+            pixelSize * 2,
+            pixelSize * 4
+          ),
+          paint
+        );
+        
+        // 右武器1
+        canvas.drawRect(
+          Rect.fromLTWH(
+            enemyWidth - pixelSize * 4,
+            pixelSize * 2,
+            pixelSize * 2,
+            pixelSize * 4
+          ),
+          paint
+        );
+        
+        // 左武器2
+        canvas.drawRect(
+          Rect.fromLTWH(
+            pixelSize * 4,
+            pixelSize * 6,
+            pixelSize * 2,
+            pixelSize * 6
+          ),
+          paint
+        );
+        
+        // 右武器2
+        canvas.drawRect(
+          Rect.fromLTWH(
+            enemyWidth - pixelSize * 6,
+            pixelSize * 6,
+            pixelSize * 2,
+            pixelSize * 6
+          ),
+          paint
+        );
+        
+        // 头部 - 绿色
+        paint.color = Colors.greenAccent;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            enemyWidth / 2 - pixelSize * 3,
+            0,
+            pixelSize * 6,
+            pixelSize * 4
+          ),
+          paint
+        );
+        
+        // 引擎火焰 - 黄色
+        paint.color = Colors.yellow;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            enemyWidth / 2 - pixelSize * 3,
+            enemyHeight * 0.8,
+            pixelSize * 6,
+            pixelSize * 4
+          ),
+          paint
+        );
+        
         break;
     }
   }
   
-  // 获取敌人颜色
-  Color _getColorByType(EnemyType type) {
-    switch (type) {
-      case EnemyType.normal: return Colors.red;
-      case EnemyType.elite: return Colors.orange;
-      case EnemyType.boss: return Colors.purple;
+  // 绘制护盾效果
+  void _drawShield(Canvas canvas) {
+    final shieldRadius = max(size.x, size.y) * 0.6;
+    final shieldOpacity = 0.3 + (sin(_movementTime * 5) + 1) * 0.1;
+    
+    // 绘制多层护盾
+    for (int i = 1; i <= 3; i++) {
+      final radius = shieldRadius * (1 + (i-1) * 0.1);
+      final layerOpacity = shieldOpacity / i;
+      
+      final shieldPaint = Paint()
+        ..color = Colors.lightBlue.withOpacity(layerOpacity)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2;
+      
+      canvas.drawCircle(
+        Offset(size.x / 2, size.y / 2),
+        radius,
+        shieldPaint,
+      );
     }
   }
   
@@ -270,6 +477,27 @@ class EnemyComponent extends SpriteComponent with HasGameRef<FlightGoGame>, Coll
   void update(double dt) {
     super.update(dt);
     
+    // 已击败的敌人不再更新
+    if (_defeated) return;
+    
+    // 更新移动
+    _updateMovement(dt);
+    
+    // 更新射击逻辑
+    _updateShooting(dt);
+    
+    // 更新闪烁效果
+    if (_flashIntensity > 0) {
+      _flashTime += dt;
+      _flashIntensity *= (1 - dt * 10); // 快速衰减
+      if (_flashIntensity < 0.05) {
+        _flashIntensity = 0;
+      }
+    }
+  }
+  
+  // 更新移动
+  void _updateMovement(double dt) {
     try {
       if (gameRef.gameState != GameState.playing) return;
       
@@ -281,11 +509,6 @@ class EnemyComponent extends SpriteComponent with HasGameRef<FlightGoGame>, Coll
       
       // 移动敌人
       position += _direction * speed * dt;
-      
-      // 更新射击冷却
-      if (_shootCooldown > 0) {
-        _shootCooldown -= dt;
-      }
       
       // 检查是否超出屏幕底部，如果是则移除
       if (position.y > gameRef.size.y + size.y) {
@@ -330,6 +553,14 @@ class EnemyComponent extends SpriteComponent with HasGameRef<FlightGoGame>, Coll
       // 如果出错，回退到直线移动
       _direction = Vector2(0, 1);
       debugPrint('Enemy direction update error: $e');
+    }
+  }
+  
+  // 更新射击逻辑
+  void _updateShooting(double dt) {
+    if (gameRef.gameState != GameState.playing) return;
+    if (_shootCooldown > 0) {
+      _shootCooldown -= dt;
     }
   }
   
@@ -380,39 +611,94 @@ class EnemyComponent extends SpriteComponent with HasGameRef<FlightGoGame>, Coll
     }
   }
   
+  /// 敌人被击败
+  void defeat() {
+    // 标记为已被击败
+    _defeated = true;
+    
+    // 增加玩家分数
+    gameRef.score += scoreValue;
+    
+    // 创建爆炸效果
+    gameRef.add(
+      ExplosionComponent(
+        position: position.clone(),
+        primaryColor: _getExplosionColor(),
+        secondaryColor: Colors.yellow,
+        initialRadius: size.x / 3,
+        maxRadius: size.x * 1.5,
+        duration: 0.8,
+      ),
+    );
+    
+    // 随机掉落能量道具（根据敌人类型有不同概率）
+    double powerUpChance;
+    switch (type) {
+      case EnemyType.normal:
+        powerUpChance = 0.05; // 5%几率
+        break;
+      case EnemyType.elite:
+        powerUpChance = 0.15; // 15%几率
+        break;
+      case EnemyType.boss:
+        powerUpChance = 1.0; // 100%几率，Boss必定掉落
+        break;
+    }
+    
+    if (_random.nextDouble() < powerUpChance) {
+      // 随机能量道具类型
+      PowerUpType powerUpType;
+      
+      // Boss会掉落随机道具，其他敌人根据一定权重掉落
+      if (type == EnemyType.boss) {
+        powerUpType = PowerUpType.values[_random.nextInt(PowerUpType.values.length)];
+      } else {
+        // 简单加权随机：武器升级占50%，护盾30%，生命20%
+        final roll = _random.nextDouble();
+        if (roll < 0.5) {
+          powerUpType = PowerUpType.weapon;
+        } else if (roll < 0.8) {
+          powerUpType = PowerUpType.shield;
+        } else {
+          powerUpType = PowerUpType.health;
+        }
+      }
+      
+      // 生成能量道具
+      gameRef.spawnPowerUp(position.clone(), type: powerUpType);
+    }
+    
+    // 播放爆炸音效
+    gameRef.audioService.playExplosionSound();
+    
+    // 延迟一帧移除组件，以便完成当前帧的逻辑
+    Future.delayed(Duration.zero, removeFromParent);
+  }
+  
+  /// 获取敌人爆炸颜色
+  Color _getExplosionColor() {
+    switch (type) {
+      case EnemyType.normal:
+        return Colors.red.shade700;
+      case EnemyType.elite:
+        return Colors.purple.shade700;
+      case EnemyType.boss:
+        return Colors.green.shade700;
+    }
+  }
+  
   /// 击中敌人
   void hit(int damage) {
     health -= damage;
     
-    // 闪烁效果
-    add(
-      ColorEffect(
-        Colors.white,
-        EffectController(duration: 0.1),
-        opacityTo: 0.5,
-      ),
-    );
+    // 替换ColorEffect为自定义闪烁效果
+    _flashColor = Colors.white;
+    _flashIntensity = 0.8;
+    _flashTime = 0;
     
     if (health <= 0) {
-      // 击败敌人，增加分数
-      gameRef.addScore(scoreValue);
-      
-      // 播放爆炸音效
-      gameRef.audioService.playExplosionSound();
-      
-      // 创建爆炸效果
-      gameRef.add(
-        ExplosionComponent(
-          position: position.clone(),
-          primaryColor: Colors.orange,
-          secondaryColor: Colors.yellow,
-          initialRadius: size.x / 2,
-          maxRadius: size.x * 1.2,
-        ),
-      );
-      
-      // 移除敌人
-      removeFromParent();
+      // 敌人被击败
+      defeat();
     }
   }
   
@@ -427,7 +713,7 @@ class EnemyComponent extends SpriteComponent with HasGameRef<FlightGoGame>, Coll
       other.removeFromParent();
     } else if (other is PlayerComponent) {
       // 与玩家碰撞，玩家受伤
-      other.takeDamage();
+      other.takeDamage(1);
     }
   }
 }

@@ -24,22 +24,21 @@ class BulletPool extends Component with HasGameRef<FlightGoGame> {
     final bulletDirection = direction ?? Vector2(0, -1);
     
     if (_playerBulletPool.isNotEmpty) {
-      final bullet = _playerBulletPool.removeLast();
-      bullet.position = position;
-      bullet.direction = bulletDirection;
-      bullet.speed = speed;
-      bullet.damage = damage;
-      bullet.angle = bulletDirection.angleToSigned(Vector2(0, -1));
-      return bullet;
-    } else {
-      return BulletComponent(
-        position: position,
-        direction: bulletDirection,
-        isPlayerBullet: true,
-        speed: speed,
-        damage: damage,
-      );
+      // 由于BulletComponent的属性是final的，我们无法修改它们
+      // 所以为了重用对象，我们需要把旧的从池中移除，然后创建一个新的
+      _playerBulletPool.removeLast();
     }
+    
+    // 创建新的子弹实例
+    return BulletComponent(
+      position: position,
+      direction: bulletDirection,
+      isPlayerBullet: true,
+      speed: speed,
+      damage: damage,
+      size: Vector2(4, 8), // 设置子弹大小
+      color: Colors.blue, // 玩家子弹颜色
+    );
   }
   
   /// 获取一个敌人子弹
@@ -52,22 +51,20 @@ class BulletPool extends Component with HasGameRef<FlightGoGame> {
     final bulletDirection = direction ?? Vector2(0, 1);
     
     if (_enemyBulletPool.isNotEmpty) {
-      final bullet = _enemyBulletPool.removeLast();
-      bullet.position = position;
-      bullet.direction = bulletDirection;
-      bullet.speed = speed;
-      bullet.damage = damage;
-      bullet.angle = bulletDirection.angleToSigned(Vector2(0, -1));
-      return bullet;
-    } else {
-      return BulletComponent(
-        position: position,
-        direction: bulletDirection,
-        isPlayerBullet: false,
-        speed: speed,
-        damage: damage,
-      );
+      // 同样，我们也不能修改敌人子弹的属性
+      _enemyBulletPool.removeLast();
     }
+    
+    // 创建新的子弹实例
+    return BulletComponent(
+      position: position,
+      direction: bulletDirection,
+      isPlayerBullet: false,
+      speed: speed,
+      damage: damage,
+      size: Vector2(6, 6), // 设置敌人子弹大小
+      color: Colors.red, // 敌人子弹颜色
+    );
   }
   
   /// 回收子弹到对象池

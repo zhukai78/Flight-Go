@@ -1,173 +1,214 @@
 import 'dart:math';
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
-import '../flight_go_game.dart';
 
 /// 爆炸效果组件
 class ExplosionComponent extends PositionComponent {
-  // 爆炸持续时间
-  final double duration;
-  
-  // 爆炸颜色
+  // 颜色
   final Color primaryColor;
   final Color secondaryColor;
   
-  // 爆炸初始大小
+  // 半径
   final double initialRadius;
-  
-  // 爆炸最大大小
   final double maxRadius;
-  
-  // 爆炸波动频率
-  final double waveFrequency;
-  
-  // 爆炸波动幅度
-  final double waveAmplitude;
-  
-  // 是否添加火花效果
-  final bool addSparks;
-  
-  // 随机数生成器
-  final _random = Random();
-  
-  // 当前半径
   double _currentRadius;
   
-  // 已经持续的时间
-  double _elapsedTime = 0;
+  // 持续时间
+  final double duration;
+  double _timeAlive = 0;
   
   // 不透明度
   double _opacity = 1.0;
   
-  // 旋转角度
-  double _rotation = 0.0;
+  // 像素大小
+  final double _pixelSize;
   
-  // 火花粒子列表
-  final List<_SparkParticle> _sparks = [];
+  // 随机数生成器
+  final Random _random = Random();
   
-  // 构造函数
+  // 预计算的像素点
+  final List<Map<String, dynamic>> _pixelData = [];
+  
+  // 动画相关变量
+  double _elapsedTime = 0.0;
+  final double waveFrequency = 5.0;
+  final double waveAmplitude = 0.2;
+  
+  // 错误状态标记
+  bool _hasRenderError = false;
+  DateTime _lastErrorTime = DateTime.now();
+  int _errorCount = 0;
+  
+  // 安全设置透明度的辅助方法
+  Color withSafeOpacity(Color baseColor, double opacity) {
+    // 确保透明度在有效范围内 (0.0-1.0)
+    final safeOpacity = opacity.clamp(0.0, 1.0);
+    try {
+      return baseColor.withOpacity(safeOpacity);
+    } catch (e) {
+      // 如果颜色处理出错，返回一个安全的默认颜色
+      return Colors.white.withOpacity(safeOpacity);
+    }
+  }
+  
   ExplosionComponent({
     required Vector2 position,
+    required this.primaryColor,
+    required this.secondaryColor,
+    required this.initialRadius,
+    required this.maxRadius,
     this.duration = 0.8,
-    this.initialRadius = 15.0,
-    this.maxRadius = 40.0,
-    this.primaryColor = Colors.orange,
-    this.secondaryColor = Colors.yellow,
-    this.waveFrequency = 15.0,
-    this.waveAmplitude = 0.15,
-    this.addSparks = true,
   }) : 
     _currentRadius = initialRadius,
+    _pixelSize = initialRadius / 10, // 像素大小固定为初始半径的1/10
     super(
       position: position,
-      size: Vector2.all(initialRadius * 2),
       anchor: Anchor.center,
-      priority: 2, // 较高的优先级，确保爆炸在最前面显示
     ) {
-    // 初始随机旋转
-    _rotation = _random.nextDouble() * pi * 2;
+    // 预计算像素点位置和颜色 - 减少每帧重新计算的开销
+    // 这样可以确保爆炸的形状在整个生命周期保持一致，减少闪烁
+    _precomputePixelData();
+  }
+  
+  // 预计算像素数据
+  void _precomputePixelData() {
+    // 创建足够多的像素点以填充最大半径
+    final int pixelCount = (maxRadius / _pixelSize * 2).ceil();
     
-    // 如果需要添加火花效果
-    if (addSparks) {
-      // 创建随机数量的火花粒子，但不要太多
-      final sparkCount = 5 + _random.nextInt(6); // 减少火花数量，从8-16降至5-10
-      for (int i = 0; i < sparkCount; i++) {
-        // 随机角度和速度
-        final angle = _random.nextDouble() * pi * 2;
-        final speed = 50.0 + _random.nextDouble() * 120.0; // 降低一些速度上限
-        
-        // 随机存活时间，但保持较短
-        final sparkDuration = duration * 0.3 + _random.nextDouble() * duration * 0.5;
-        
-        // 随机大小
-        final size = 1.0 + _random.nextDouble() * 2.5; // 稍微减小火花大小范围
-        
-        // 随机颜色
-        final sparkColor = _random.nextBool() ? primaryColor : secondaryColor;
-        
-        // 创建火花粒子
-        _sparks.add(_SparkParticle(
-          initialPosition: Vector2.zero(),
-          angle: angle,
-          speed: speed,
-          size: size,
-          duration: sparkDuration,
-          color: sparkColor,
-        ));
-      }
+    // 创建爆炸中的像素点
+    for (int i = 0; i < pixelCount * 2; i++) {
+      // 使用固定种子生成随机位置，确保一致性
+      final angle = _random.nextDouble() * 2 * pi;
+      final distance = _random.nextDouble() * maxRadius;
+      
+      // 计算像素位置
+      final x = cos(angle) * distance;
+      final y = sin(angle) * distance;
+      
+      // 确定颜色 - 根据离中心的距离
+      final normalizedDistance = distance / maxRadius;
+      final useSecondaryColor = _random.nextDouble() < 0.3 || normalizedDistance > 0.7;
+      
+      _pixelData.add({
+        'x': x,
+        'y': y,
+        'distance': distance,
+        'color': useSecondaryColor ? secondaryColor : primaryColor,
+        'size': _pixelSize * (1.0 + _random.nextDouble() * 0.5),
+      });
     }
   }
   
   @override
   void render(Canvas canvas) {
-    super.render(canvas);
+    // 如果有之前的渲染错误，使用简化渲染
+    if (_hasRenderError) {
+      _renderSimplified(canvas);
+      return;
+    }
     
     try {
+      // 中心点
+      final centerX = size.x / 2;
+      final centerY = size.y / 2;
+      
       // 保存画布状态
       canvas.save();
-      
-      // 设置位移到中心
-      final centerX = _currentRadius;
-      final centerY = _currentRadius;
       canvas.translate(centerX, centerY);
       
-      // 绘制爆炸主体
-      // 外层光晕
-      final outerGlow = Paint()
-        ..color = primaryColor.withAlpha((255 * _opacity * 0.4).toInt())
+      // 主画笔
+      final paint = Paint()
         ..style = PaintingStyle.fill
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+        ..isAntiAlias = false; // 关闭抗锯齿，减少性能开销
       
-      canvas.drawCircle(
-        Offset.zero,
-        _currentRadius * 1.2,
-        outerGlow,
-      );
+      // 计算爆炸比例 (当前半径与最大半径的比值)
+      final expansionRatio = _currentRadius / maxRadius;
       
-      // 中层爆炸
-      final middleGlow = Paint()
-        ..shader = RadialGradient(
-          colors: [
-            secondaryColor.withOpacity(_opacity * 0.8),
-            primaryColor.withOpacity(_opacity * 0.6),
-            primaryColor.withOpacity(_opacity * 0.2),
-          ],
-          stops: const [0.0, 0.6, 1.0],
-        ).createShader(
-          Rect.fromCircle(
-            center: Offset.zero,
-            radius: _currentRadius,
-          ),
-        );
+      // 绘制爆炸的像素，限制单次渲染的像素数量
+      final maxPixelsPerFrame = 100; // 限制每帧渲染的最大像素数
+      int pixelCount = 0;
       
-      canvas.drawCircle(
-        Offset.zero,
-        _currentRadius,
-        middleGlow,
-      );
-      
-      // 内部亮点
-      final innerGlow = Paint()
-        ..color = Colors.white.withOpacity(_opacity * 0.9)
-        ..style = PaintingStyle.fill;
-      
-      canvas.drawCircle(
-        Offset.zero,
-        _currentRadius * 0.4,
-        innerGlow,
-      );
-      
-      // 绘制火花粒子
-      if (addSparks) {
-        for (final spark in _sparks) {
-          spark.render(canvas);
+      for (final pixelData in _pixelData) {
+        // 限制每帧渲染的像素数量
+        if (pixelCount >= maxPixelsPerFrame) break;
+        
+        final distance = pixelData['distance'] as double;
+        
+        // 只绘制在当前半径范围内的像素
+        if (distance <= _currentRadius) {
+          pixelCount++;
+          
+          // 计算像素不透明度，离中心越远越透明
+          final distanceRatio = distance / _currentRadius;
+          final pixelOpacity = (_opacity * (1.0 - distanceRatio * 0.5)).clamp(0.0, 1.0);
+          
+          // 设置颜色和不透明度
+          paint.color = withSafeOpacity(pixelData['color'] as Color, pixelOpacity);
+          
+          // 获取像素大小
+          final pixelSize = pixelData['size'] as double;
+          
+          // 计算位置，考虑爆炸扩张
+          final x = (pixelData['x'] as double) * expansionRatio;
+          final y = (pixelData['y'] as double) * expansionRatio;
+          
+          // 绘制像素方块
+          canvas.drawRect(
+            Rect.fromLTWH(
+              x - pixelSize / 2,
+              y - pixelSize / 2,
+              pixelSize,
+              pixelSize,
+            ),
+            paint,
+          );
         }
       }
       
       // 恢复画布状态
       canvas.restore();
     } catch (e) {
-      debugPrint('Explosion render error: $e');
+      _errorCount++;
+      // 记录错误，但限制频率
+      final now = DateTime.now();
+      if (now.difference(_lastErrorTime).inSeconds > 5) {
+        _lastErrorTime = now;
+        debugPrint('爆炸效果渲染错误: $e');
+      }
+      
+      if (_errorCount > 3) {
+        _hasRenderError = true;
+      }
+      
+      // 尝试恢复画布状态
+      try {
+        canvas.restore();
+      } catch (_) {
+        // 忽略恢复失败
+      }
+      
+      // 使用简化渲染
+      _renderSimplified(canvas);
+    }
+  }
+  
+  // 简化版渲染，在出错时使用
+  void _renderSimplified(Canvas canvas) {
+    try {
+      // 安全设置颜色
+      final safeOpacity = _opacity.clamp(0.0, 1.0);
+      final simplePaint = Paint()
+        ..color = Colors.orange.withOpacity(safeOpacity)
+        ..style = PaintingStyle.fill;
+      
+      // 简单绘制一个圆形
+      canvas.drawCircle(
+        Offset(position.x, position.y),
+        _currentRadius,
+        simplePaint
+      );
+    } catch (_) {
+      // 忽略所有错误
     }
   }
   
@@ -175,51 +216,31 @@ class ExplosionComponent extends PositionComponent {
   void update(double dt) {
     super.update(dt);
     
-    try {
-      // 更新已经持续的时间
-      _elapsedTime += dt;
-      
-      // 计算进度（0.0 到 1.0）
-      final progress = _elapsedTime / duration;
-      
-      // 更新不透明度，爆炸初期快速增亮，后期缓慢淡出
-      if (progress < 0.2) {
-        // 初期快速增亮
-        _opacity = progress / 0.2;
-      } else {
-        // 后期缓慢淡出
-        _opacity = 1.0 - ((progress - 0.2) / 0.8);
-      }
-      
-      // 更新旋转
-      _rotation += dt * 1.5;
-      
-      // 更新半径，添加波动效果
-      final radiusProgress = min(1.0, progress * 1.5);
-      final baseRadius = initialRadius + (maxRadius - initialRadius) * radiusProgress;
-      
-      // 添加波动效果
-      final waveFactor = sin(_elapsedTime * waveFrequency) * waveAmplitude;
-      _currentRadius = baseRadius * (1.0 + waveFactor);
-      
-      // 更新组件大小
-      size.setAll(_currentRadius * 2);
-      
-      // 更新火花粒子
-      if (addSparks) {
-        for (final spark in _sparks) {
-          spark.update(dt, progress);
-        }
-      }
-      
-      // 如果持续时间结束，移除组件
-      if (_elapsedTime >= duration) {
-        removeFromParent();
-      }
-    } catch (e) {
-      debugPrint('Explosion update error: $e');
+    // 更新存活时间和动画时间
+    _timeAlive += dt;
+    _elapsedTime += dt;
+    
+    // 检查是否应该移除
+    if (_timeAlive >= duration) {
       removeFromParent();
+      return;
     }
+    
+    // 计算生命周期比例
+    final lifeRatio = _timeAlive / duration;
+    
+    // 更新不透明度 - 使用平滑的渐变式淡出
+    _opacity = 1.0 - (lifeRatio * lifeRatio);
+    
+    // 更新半径 - 快速扩张然后减速
+    final expansionCurve = lifeRatio < 0.3 
+        ? lifeRatio / 0.3  // 前30%时间快速扩张到最大
+        : 1.0;  // 之后保持最大
+    
+    _currentRadius = initialRadius + (maxRadius - initialRadius) * expansionCurve;
+    
+    // 更新组件尺寸以匹配当前半径
+    size = Vector2.all(_currentRadius * 2);
   }
 }
 
@@ -255,6 +276,21 @@ class _SparkParticle {
   // 随机数生成器
   final _random = Random();
   
+  // 渲染错误标记
+  bool _hasRenderError = false;
+  
+  // 安全设置透明度的辅助方法
+  Color withSafeOpacity(Color baseColor, double opacity) {
+    // 确保透明度在有效范围内 (0.0-1.0)
+    final safeOpacity = opacity.clamp(0.0, 1.0);
+    try {
+      return baseColor.withOpacity(safeOpacity);
+    } catch (e) {
+      // 如果颜色处理出错，返回一个安全的默认颜色
+      return Colors.white.withOpacity(safeOpacity);
+    }
+  }
+  
   // 构造函数
   _SparkParticle({
     required this.initialPosition,
@@ -267,30 +303,86 @@ class _SparkParticle {
   
   // 渲染粒子
   void render(Canvas canvas) {
-    // 创建画笔
-    final paint = Paint()
-      ..color = color.withOpacity(_opacity)
-      ..style = PaintingStyle.fill;
+    // 如果之前出现过错误，使用简化渲染
+    if (_hasRenderError) {
+      _renderSimplified(canvas);
+      return;
+    }
     
-    // 绘制火花粒子
-    canvas.drawCircle(
-      Offset(position.x, position.y),
-      size,
-      paint,
-    );
-    
-    // 为较大的火花添加光晕
-    if (size > 2.0) {
-      final glowPaint = Paint()
-        ..color = color.withOpacity(_opacity * 0.5)
-        ..style = PaintingStyle.fill
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2);
+    try {
+      // 确保透明度在有效范围内
+      final safeOpacity = _opacity.clamp(0.0, 1.0);
       
-      canvas.drawCircle(
-        Offset(position.x, position.y),
-        size * 1.8,
-        glowPaint,
+      // 创建画笔
+      final paint = Paint()
+        ..color = withSafeOpacity(color, safeOpacity)
+        ..style = PaintingStyle.fill;
+      
+      // 绘制像素风格的火花粒子
+      // 使用小方块代替圆形
+      final pixelSize = size * 0.8;
+      canvas.drawRect(
+        Rect.fromCenter(
+          center: Offset(position.x, position.y),
+          width: pixelSize,
+          height: pixelSize,
+        ),
+        paint,
       );
+      
+      // 为较大的火花添加十字形状的亮点
+      if (size > 2.0 && _opacity > 0.3) {
+        final crossSize = size * 0.6;
+        
+        // 亮点的颜色，确保透明度有效
+        paint.color = withSafeOpacity(Colors.white, safeOpacity * 0.7);
+        
+        // 水平线
+        canvas.drawRect(
+          Rect.fromCenter(
+            center: Offset(position.x, position.y),
+            width: crossSize,
+            height: crossSize / 3,
+          ),
+          paint,
+        );
+        
+        // 垂直线
+        canvas.drawRect(
+          Rect.fromCenter(
+            center: Offset(position.x, position.y),
+            width: crossSize / 3,
+            height: crossSize,
+          ),
+          paint,
+        );
+      }
+    } catch (e) {
+      _hasRenderError = true;
+      _renderSimplified(canvas);
+    }
+  }
+  
+  // 简化版渲染
+  void _renderSimplified(Canvas canvas) {
+    try {
+      // 确保透明度在有效范围内
+      final safeOpacity = _opacity.clamp(0.0, 1.0);
+      final paint = Paint()
+        ..color = Colors.white.withOpacity(safeOpacity)
+        ..style = PaintingStyle.fill;
+      
+      // 简单绘制一个小矩形
+      canvas.drawRect(
+        Rect.fromCenter(
+          center: Offset(position.x, position.y),
+          width: size * 0.5,
+          height: size * 0.5,
+        ),
+        paint,
+      );
+    } catch (_) {
+      // 忽略所有错误
     }
   }
   

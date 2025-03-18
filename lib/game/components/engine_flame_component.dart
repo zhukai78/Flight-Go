@@ -32,8 +32,6 @@ class EngineFlameComponent extends PositionComponent {
   
   @override
   void render(Canvas canvas) {
-    super.render(canvas);
-    
     // 基本火焰
     final basePaint = Paint()
       ..color = baseColor
