@@ -10,29 +10,121 @@
 
     For more details:
     * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
   -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="Flight-Go - A 2D pixel art space shooter game">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  
+  <!-- Content Security Policy - 放宽限制以允许正确加载 -->
+  <meta http-equiv="Content-Security-Policy" content="default-src * 'self' data: blob: 'unsafe-inline' 'unsafe-eval' https://* http://*;">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="flight_go">
+  <meta name="apple-mobile-web-app-title" content="Flight-Go">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>flight_go</title>
+  <title>Flight-Go</title>
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
-  <script src="flutter_bootstrap.js" async></script>
+  <!-- Loading indicator -->
+  <div id="loading">
+    <style>
+      body {
+        background-color: #000020;
+        margin: 0;
+        padding: 0;
+        inset: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+      }
+      #loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: #4080FF;
+        font-family: 'Courier New', monospace;
+        text-align: center;
+      }
+      .loader {
+        border: 4px solid rgba(0, 0, 128, 0.5);
+        border-left-color: #4080FF;
+        border-radius: 50%;
+        width: 30px;
+        height: 30px;
+        animation: spin 1s linear infinite;
+        margin-bottom: 10px;
+      }
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    </style>
+    <div class="loader"></div>
+    <p>Flight-Go Loading...</p>
+  </div>
+  
+  <!-- 首先加载flutter.js -->
+  <script src="flutter.js" defer></script>
+  
+  <script>
+    // 定义全局serviceWorkerVersion变量，避免引用错误
+    window.serviceWorkerVersion = null;
+    
+    // 主应用初始化
+    window.addEventListener('load', function() {
+      var loadingIndicator = document.querySelector('#loading');
+      
+      // 动态创建script标签
+      _flutter = {
+        loader: {
+          loadEntrypoint: function(options) {
+            return new Promise(function(resolve, reject) {
+              try {
+                window.addEventListener('flutter-first-frame', function() {
+                  if (loadingIndicator) {
+                    loadingIndicator.remove();
+                  }
+                });
+                
+                var scriptTag = document.createElement('script');
+                scriptTag.src = 'main.dart.js';
+                scriptTag.type = 'application/javascript';
+                document.body.append(scriptTag);
+                
+                resolve({
+                  runApp: function() {
+                    // Flutter 自动初始化
+                  }
+                });
+              } catch (error) {
+                console.error('Failed to load app:', error);
+                reject(error);
+              }
+            });
+          }
+        }
+      };
+      
+      // 加载应用
+      _flutter.loader.loadEntrypoint({
+        serviceWorker: {
+          serviceWorkerVersion: window.serviceWorkerVersion
+        }
+      });
+    });
+  </script>
 </body>
 </html>
